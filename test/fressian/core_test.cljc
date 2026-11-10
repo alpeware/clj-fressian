@@ -15,9 +15,16 @@
                :cljs [clojure.test.check.properties :refer-macros [for-all]])
             #?(:clj [clojure.walk :as walk])
             [fressian.core :as fressian])
-  #?(:clj (:import [java.nio ByteBuffer]
+  #?(:clj (:import [java.math BigInteger]
+                   [java.net URI]
+                   [java.nio ByteBuffer]
                    [java.util Date UUID]
+                   [java.util.regex Pattern]
                    [org.fressian CachedObject TaggedObject])))
+
+#?(:clj
+   #_{:clj-kondo/ignore [:missing-docstring]}
+   (defrecord SampleWireRec [a b]))
 
 (def ^{:doc "Fixed golden vectors for Canonical Fressian binary encoding."}
   canonical-fressian-golden-vectors
@@ -68,6 +75,12 @@
 
     #?@(:clj [(and (instance? Date a) (instance? Date b))
               (= (.getTime ^Date a) (.getTime ^Date b))
+              (and (instance? Pattern a) (instance? Pattern b))
+              (= (.pattern ^Pattern a) (.pattern ^Pattern b))
+              (and (record? a) (record? b))
+              (and (= (class a) (class b))
+                   (= (count a) (count b))
+                   (every? (fn [[k v]] (val-equiv? v (get b k))) a))
               (and (instance? TaggedObject a) (fressian/tagged-object? b))
               (and (= (.getTag ^TaggedObject a) (fressian/tag b))
                    (val-equiv? (vec (.getValue ^TaggedObject a))
@@ -165,7 +178,18 @@
                       [:foo/bar :foo/bar :foo/baz 'alpha/beta 'alpha/beta 'gamma]
                       u
                       d
-                      [\a \b \a]
+                      [\a \b \a \λ]
+                      123N
+                      -999999999999999999999999999999N
+                      (BigInteger/valueOf 42)
+                      [123N 123N]
+                      123.45M
+                      -0.0001M
+                      22/7
+                      -3/8
+                      (URI. "https://bitecho.org/git/clj-fressian.git")
+                      #"^[a-z0-9_-]+$"
+                      (->SampleWireRec 10 "hello")
                       [t1 t2]
                       [c1 c2]
                       (fressian/hex->bytes "00010203040506070809")
@@ -181,7 +205,11 @@
              (is (= (fressian/bytes->hex ref-footer-bs) (fressian/bytes->hex our-footer-bs))
                  (str "Footer byte mismatch vs data.fressian for: " (pr-str s)))
              (is (val-equiv? (std-read-bytes ref-bs) (fressian/read ref-bs)))
-             (is (val-equiv? (std-read-bytes our-bs) (fressian/read our-bs)))))))))
+             (is (val-equiv? (std-read-bytes our-bs) (fressian/read our-bs)))))
+         (doseq [canon-s [123N -999999999999999999999999999999N (BigInteger/valueOf 42)
+                          123.45M 22/7 \λ (URI. "https://bitecho.org") #"abc+"]]
+           (let [cbs (fressian/encode-canonical canon-s)]
+             (is (val-equiv? (std-read-bytes cbs) (fressian/decode cbs)))))))))
 
 ;; =============================================================================
 ;; Generative Properties (Both JVM and CLJS + Bidirectional JVM Reference Tests)
@@ -246,14 +274,27 @@
                   (gen/elements sym-pool)
                   gen/uuid
                   (gen/fmap #(Date. (long %)) (gen/choose 0 2000000000000))
+                  (gen/elements [0N 1N -1N 123N -4097N 999999999999999999999999999999N
+                                 (BigInteger/valueOf 123456789)])
+                  (gen/elements [0.0M 123.45M -0.0001M 987654321.125M])
+                  (gen/elements [1/2 22/7 -3/8 100/3])
+                  (gen/elements [\a \Z \0 \λ])
+                  (gen/elements [(URI. "https://bitecho.org")
+                                 (URI. "https://bitecho.org/git/clj-fressian.git")])
+                  (gen/elements [#"^[a-z0-9_-]+$" #"foo|bar"])
+                  (gen/fmap (fn [[a b]] (->SampleWireRec a b))
+                            (gen/tuple gen/small-integer gen/string-alphanumeric))
                   (gen/fmap (fn [[t a b]]
                               (fressian/tagged-object t [a b]))
-                            (gen/tuple (gen/elements tag-pool) gen/small-integer gen/string-alphanumeric))])]
+                            (gen/tuple (gen/elements tag-pool) gen/small-integer gen/string-alphanumeric))])
+           set-elem-gen (gen/one-of [(gen/elements kw-pool)
+                                     gen/small-integer
+                                     (gen/elements [123N 22/7 123.45M \a (URI. "https://bitecho.org")])])]
        (gen/recursive-gen
         (fn [inner]
           (gen/one-of
            [(gen/vector inner 0 6)
-            (gen/fmap set (gen/vector gen/keyword 0 5))
+            (gen/fmap set (gen/vector set-elem-gen 0 5))
             (gen/map (gen/elements kw-pool) inner {:max-elements 5})]))
         leaf))))
 

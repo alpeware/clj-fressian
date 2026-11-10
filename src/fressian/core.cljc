@@ -807,11 +807,18 @@
 ;; 6. Standard Fressian Writer (Priority Cache + Struct Cache + Footer)
 ;; =============================================================================
 
+(defn- bigint-or-biginteger?
+  [x]
+  #?(:clj  (or (instance? clojure.lang.BigInt x)
+               (instance? java.math.BigInteger x))
+     :cljs (boolean (and false x))))
+
 (defn- should-skip-cache?
   "Matches `org.fressian.FressianWriter/shouldSkipCache`."
   [x]
   (cond
     (or (nil? x) (boolean? x)) true
+    (bigint-or-biginteger? x) false
     (integer? x) (<= -4096 x 4095)
     (string? x) (zero? (count x))
     (float? x) (or (== x 0.0) (== x 1.0))
@@ -867,6 +874,13 @@
       (false? val)
       (write-raw-byte w tag-false)
 
+      #?@(:clj [(or (instance? clojure.lang.BigInt val) (instance? java.math.BigInteger val))
+                (let [^java.math.BigInteger bi (if (instance? clojure.lang.BigInt val)
+                                                 (.toBigInteger ^clojure.lang.BigInt val)
+                                                 val)]
+                  (write-tag! w state-atom "bigint" 1)
+                  (write-fressian-bytes w (.toByteArray bi)))])
+
       (integer? val)
       (write-fressian-int w val)
 
@@ -912,13 +926,6 @@
                   (write-tag! w state-atom "ratio" 2)
                   (write-standard-object! w state-atom (.numerator r) false)
                   (write-standard-object! w state-atom (.denominator r) false))
-
-                (or (instance? clojure.lang.BigInt val) (instance? java.math.BigInteger val))
-                (let [^java.math.BigInteger bi (if (instance? clojure.lang.BigInt val)
-                                                 (.toBigInteger ^clojure.lang.BigInt val)
-                                                 val)]
-                  (write-tag! w state-atom "bigint" 1)
-                  (write-fressian-bytes w (.toByteArray bi)))
 
                 (decimal? val)
                 (let [^java.math.BigDecimal bd val]
@@ -1063,6 +1070,44 @@
 
     (false? val)
     (write-raw-byte w tag-false)
+
+    #?@(:clj [(or (instance? clojure.lang.BigInt val) (instance? java.math.BigInteger val))
+              (let [^java.math.BigInteger bi (if (instance? clojure.lang.BigInt val)
+                                               (.toBigInteger ^clojure.lang.BigInt val)
+                                               val)]
+                (write-raw-byte w tag-bigint)
+                (write-fressian-bytes w (.toByteArray bi)))
+
+              (decimal? val)
+              (let [^java.math.BigDecimal bd val]
+                (write-raw-byte w tag-bigdec)
+                (write-fressian-bytes w (.toByteArray (.unscaledValue bd)))
+                (write-fressian-int w (.scale bd)))
+
+              (ratio? val)
+              (let [^clojure.lang.Ratio r val]
+                (write-raw-byte w tag-structtype)
+                (write-fressian-string w "ratio")
+                (write-fressian-int w 2)
+                (write-canonical-value! w (.numerator r))
+                (write-canonical-value! w (.denominator r)))
+
+              (char? val)
+              (do
+                (write-raw-byte w tag-structtype)
+                (write-fressian-string w "char")
+                (write-fressian-int w 1)
+                (write-fressian-int w (int val)))
+
+              (instance? java.net.URI val)
+              (do
+                (write-raw-byte w tag-uri)
+                (write-fressian-string w (.toString ^java.net.URI val)))
+
+              (instance? java.util.regex.Pattern val)
+              (do
+                (write-raw-byte w tag-regex)
+                (write-fressian-string w (.pattern ^java.util.regex.Pattern val)))])
 
     (integer? val)
     (write-fressian-int w val)
@@ -1747,6 +1792,12 @@
      (cond
        (tagged-object? x)
        (tagged-object (tag x) (mapv normalize-decoded-wire (tagged-value x)))
+
+       (record? x)
+       (reduce-kv (fn [r k v]
+                    (assoc r k (normalize-decoded-wire v)))
+                  x
+                  x)
 
        (instance? java.util.Map x)
        (reduce (fn [m ^java.util.Map$Entry e]
