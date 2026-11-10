@@ -1,0 +1,5 @@
+{:linters
+ {:too-many-params {:level :warning :max-params 5}
+  :missing-docstring {:level :warning}
+  :unsorted-required-namespaces {:level :warning}}
+ :lint-as {clojure.test.check.clojure-test/defspec clojure.core/def}}

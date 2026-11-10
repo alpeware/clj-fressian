@@ -1,0 +1,16 @@
+{:paths ["src"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.4"}}
+ :aliases {:test {:extra-paths ["test"]
+                  :extra-deps {org.clojure/test.check {:mvn/version "1.1.1"}
+                               org.clojure/data.fressian {:mvn/version "1.1.0"}
+                               io.airlift/aircompressor {:mvn/version "2.0.2"}}
+                  :main-opts ["-m" "fressian.test-runner"]}
+           :test-cljs {:extra-paths ["test"]
+                       :extra-deps {org.clojure/clojurescript {:mvn/version "1.11.132"}
+                                    org.clojure/test.check {:mvn/version "1.1.1"}}
+                       :main-opts ["-m" "fressian.cljs-runner"]}
+           :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2026.01.19"}
+                                 org.clojure/test.check {:mvn/version "1.1.1"}}
+                  :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"]}
+           :format {:replace-deps {dev.weavejester/cljfmt {:mvn/version "0.16.1"}}
+                    :main-opts ["-m" "cljfmt.main" "fix" "src" "test"]}}}
