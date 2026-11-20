@@ -543,24 +543,37 @@
        (.toByteArray baos))))
 
 #?(:cljs
-   (deftype JSByteWriter [arr]
+   (deftype JSByteWriter [^:mutable buf ^:mutable pos]
      IByteWriter
      (write-raw-byte [_ b]
-       (.push arr (bit-and b 0xff)))
+       (let [cap (.-length buf)]
+         (when (>= pos cap)
+           (let [next-buf (js/Uint8Array. (* cap 2))]
+             (.set next-buf buf 0)
+             (set! buf next-buf))))
+       (aset buf pos (bit-and b 0xff))
+       (set! pos (inc pos)))
      (write-raw-bytes [_ ba]
-       (let [len (.-length ba)]
-         (dotimes [i len]
-           (.push arr (aget ba i)))))
+       (let [len (.-length ba)
+             needed (+ pos len)]
+         (when (> needed (.-length buf))
+           (let [new-cap (loop [c (* (.-length buf) 2)]
+                           (if (>= c needed) c (recur (* c 2))))
+                 next-buf (js/Uint8Array. new-cap)]
+             (.set next-buf buf 0)
+             (set! buf next-buf)))
+         (.set buf ba pos)
+         (set! pos needed)))
      (bytes-written [_]
-       (.-length arr))
+       pos)
      (get-result-bytes [_]
-       (js/Uint8Array. arr))))
+       (.slice buf 0 pos))))
 
 (defn make-byte-writer
   "Creates a platform-appropriate `IByteWriter` instance (`JVMByteWriter` or `JSByteWriter`)."
   []
   #?(:clj  (JVMByteWriter. (java.io.ByteArrayOutputStream. 128))
-     :cljs (JSByteWriter. #js [])))
+     :cljs (JSByteWriter. (js/Uint8Array. 256) 0)))
 
 (defn adler32-bytes
   "Computes standard Adler-32 checksum over `ba[start..end)` (pure .cljc)."
